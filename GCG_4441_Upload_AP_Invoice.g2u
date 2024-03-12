@@ -1,0 +1,824 @@
+Program.Sub.ScreenSU.Start
+Gui.frmUpload..Create
+Gui.frmUpload..Caption("Upload")
+Gui.frmUpload..Size(4500,2715)
+Gui.frmUpload..MinX(0)
+Gui.frmUpload..MinY(0)
+Gui.frmUpload..Position(0,0)
+Gui.frmUpload..BackColor(-2147483633)
+Gui.frmUpload..MaxButton(False)
+Gui.frmUpload..MinButton(False)
+Gui.frmUpload..MousePointer(0)
+Gui.frmUpload..Event(UnLoad,Form_UnLoad)
+Gui.frmUpload.cmdUpload.Create(Button)
+Gui.frmUpload.cmdUpload.Size(855,375)
+Gui.frmUpload.cmdUpload.Position(195,1680)
+Gui.frmUpload.cmdUpload.Caption("Upload")
+Gui.frmUpload.cmdUpload.Event(Click,cmdUpload_Click)
+Gui.frmUpload.lbl1.Create(Label,"Post Date :",True,945,255,0,195,315,True,0,"Arial",8,-2147483633,0)
+Gui.frmUpload.lbl2.Create(Label,"Vendor :",True,885,255,0,195,735,True,0,"Arial",8,-2147483633,0)
+Gui.frmUpload.lbl3.Create(Label,"Invoice :",True,840,255,0,210,1185,True,0,"Arial",8,-2147483633,0)
+Gui.frmUpload.dtPost.Create(DatePicker)
+Gui.frmUpload.dtPost.Size(1185,285)
+Gui.frmUpload.dtPost.Position(1155,255)
+Gui.frmUpload.txtVendor.Create(TextBox,"",True,1215,300,0,1155,675,True,0,"Arial",8,-2147483643,1)
+Gui.frmUpload.txtVendor.Locked(True)
+Gui.frmUpload.txtInvoice.Create(TextBox,"",True,1665,300,0,1155,1125,True,0,"Arial",8,-2147483643,1)
+Gui.frmUpload.txtInvoice.MaxLength(15)
+Gui.frmUpload.cmdBrowse.Create(Button)
+Gui.frmUpload.cmdBrowse.Size(360,315)
+Gui.frmUpload.cmdBrowse.Position(2445,660)
+Gui.frmUpload.cmdBrowse.Caption("^")
+Gui.frmUpload.cmdBrowse.Event(Click,cmdBrowse_Click)
+Program.Sub.ScreenSU.End
+
+Program.Sub.Preflight.Start
+v.Global..BulkDeclareString(sFileExcel, sFileExcel_Result)
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+F.Intrinsic.Control.SetErrorHandler("Main_Err")
+F.Intrinsic.Control.ClearErrors
+
+
+gui.frmUpload..Show 
+
+f.Intrinsic.Control.ExitSub
+
+'
+'F.Intrinsic.Task.LaunchGSSSync("AP043UP1","-c","")
+'
+'f.Intrinsic.Control.End 
+
+
+
+v.Local..BulkDeclareString(sError, sSQL)
+
+'BN Apr 10, 2017
+'This program will upload AP invoices from a spreadsheet .xls. It will be fired on Script 1 button
+'Customer does the uploading more than twice/month. CallWrapper UPLAPOP needs Invoice numbers to upload, while they do not have those ready before the end of every month. 
+'We will try to figure out way to put Invoice number instead. This needs to be discussed with Tanner.
+' The other issue is that they haven't installed Concur until May, so we have to wait until then for having the right format of the importing .xls file to GSS.
+	'Temporal .xls layout
+	'(GAB Excel function name columns index starting from 1)
+	'column 0: 		GL_Account
+	'column 1: 		Vendor_To_Pay
+	'column 2:		Merchant
+	'column 3:		Transaction Amount 
+	'column 4:		Name
+	'column 5: 		WorkOrder
+	'column 6:		Invoice Number <=> would suggest Concur ID
+	'column 7:		Result
+	'column 8:		Reason
+	'column 9: 		Batch Line
+F.ODBC.Connection!conx.OpenConnection(V.Ambient.PDSN, V.Ambient.PUser, V.Ambient.PPass)
+'Populate hook
+f.Intrinsic.Control.If(v.Caller.Hook,=,35105)
+F.Intrinsic.Control.AndIf(V.Passed.000006,=,"Invoice")	
+	V.Passed.000051.Set("Invoice Lines")
+f.Intrinsic.Control.EndIf
+
+'PreSave hook. Deactivate script 1 (Invoice Lines) button if Save button is used. There is no PostSave hook, so we use PreSave hook with validation
+F.Intrinsic.Control.If(V.Caller.Hook,=,35110)
+	'Check Vendor
+	F.Intrinsic.String.Concat("Select * From V_Vendor_Master where Vendor ='",v.Passed.000002,"'",V.Local.sSQL)
+	F.ODBC.Connection!Conx.OpenRecordsetRO("rst",V.Local.sSQL)
+	F.Intrinsic.Control.If(V.ODBC.Conx!rst.EOF,=,True)
+		f.Intrinsic.Control.ExitSub
+	F.Intrinsic.Control.EndIf
+	F.ODBC.Conx!rst.Close
+
+	'Check Invoice Number
+	f.Intrinsic.Control.If(v.Passed.000018.Trim,=,"")
+		f.Intrinsic.Control.ExitSub
+	f.Intrinsic.Control.EndIf	
+
+	'Check Invoice Amount
+	f.Intrinsic.Control.If(v.Passed.000023.Trim,=,".00")
+		f.Intrinsic.Control.ExitSub
+	f.Intrinsic.Control.EndIf	
+
+	F.Intrinsic.UI.ChangeCallerProperty(V.Passed.000051,"LOCK",1)
+
+F.Intrinsic.Control.EndIf
+
+f.Intrinsic.Control.If(v.Caller.Hook,=,35121)
+f.Intrinsic.Control.AndIf(v.Passed.000006,=,"Invoice")	
+	F.Intrinsic.Control.CallSub(select_upload_file)	
+f.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("Main_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4441_Upload_AP_Invoice.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+Function.Intrinsic.Control.EndIf
+
+Program.Sub.Main.End
+
+Program.Sub.Form_UnLoad.Start
+F.Intrinsic.Control.SetErrorHandler("Form_UnLoad_Err")
+F.Intrinsic.Control.ClearErrors
+
+V.Local.sError.Declare(String)
+
+
+f.Intrinsic.Control.End
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("Form_UnLoad_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4441_Upload_AP_Invoice.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+Function.Intrinsic.Control.EndIf
+
+Program.Sub.Form_UnLoad.End
+
+Program.Sub.Select_Upload_File.Start
+F.Intrinsic.Control.SetErrorHandler("Select_Upload_File_Err")
+F.Intrinsic.Control.ClearErrors
+
+V.Local.sError.Declare(String)
+
+F.Intrinsic.UI.ShowOpenFileDialog("","xls|*.xls",V.Global.sFileExcel)
+F.Intrinsic.Control.If(V.Global.sFileExcel,=,"***CANCEL***")
+	F.Intrinsic.UI.Msgbox("No File Was Selected")
+	F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.EndIf
+'F.Intrinsic.Control.CallSub(Process_File)
+f.Intrinsic.Control.CallSub(newupload)
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("Select_Upload_File_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4441_Upload_AP_Invoice.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+Function.Intrinsic.Control.EndIf
+
+Program.Sub.Select_Upload_File.End
+
+Program.Sub.Process_File.Start
+F.Intrinsic.Control.SetErrorHandler("Process_File_Err")
+F.Intrinsic.Control.ClearErrors
+
+v.Local..BulkDeclareString(sError, sSQL, sRow, sCol, sFile, sBatchNum, sBatchDate, sWO, sGoodGL, sGoodAmount, sGoodWO, sDataCondition, sReason, sHold, sTemp, sOITLine, sOpenItemText, sGLDTLine, sGLDetailText, sSuffix)
+v.Local..BulkDeclareLong(iExcel, iRowNum, iCounter, iLine, iError)
+V.Local..BulkDeclareString(sDate, sRet, sTempFull)
+v.Local..BulkDeclareBoolean(bAmount, bGoodData, bWrite)
+V.Local.fHold.Declare(float)
+v.Local.dPostDate.Declare(date)
+v.Local.lVNO.Declare
+v.Local.sTemp1.Declare
+
+'Batch Number: v.passed.000007 5
+v.Local.sBatchNum.Set(v.Passed.000007)
+
+'Batch Date: v.passed.000009 MMDDYY
+v.Local.sBatchDate.Set(v.passed.000009)
+Function.Intrinsic.Date.ConvertDString(v.passed.000009,"MMDDYY", v.Local.dPostDate)
+
+f.Intrinsic.UI.InvokeWaitDialog("Processing")
+
+'We copy this file, then get data and write result to the new file
+f.Intrinsic.String.Split(v.Global.sFileExcel,".",v.Local.sHold)
+f.Intrinsic.String.Concat(v.Local.sHold(0),"_",v.Caller.Terminal,"_Result.xls",v.Global.sFileExcel_Result)
+F.Intrinsic.File.CopyFile(V.Global.sFileExcel,V.Global.sFileExcel_Result)
+
+v.Local.iExcel.Set(1)
+F.Automation.MSExcel.CreateAppObject("MSExcel")
+F.Automation.MSExcel.OpenWorkbook("MSEXcel","Excel_Sheets",V.Global.sFileExcel_Result)
+F.Automation.MSExcel.OpenWorksheet("Excel_Sheets","Sheet",V.Local.iExcel)
+Function.Automation.MSExcel.WriteCell("Sheet", 1, 8,"Result")
+Function.Automation.MSExcel.WriteCell("Sheet", 1, 9,"Reason")
+Function.Automation.MSExcel.WriteCell("Sheet", 1, 10,"BatchLine")
+
+F.Automation.MSExcel.RowCount("Sheet",V.Local.iRowNum)
+
+F.Intrinsic.Control.For(V.Local.iCounter,2,v.Local.iRowNum,1)
+	F.Automation.MSExcel.ReadRow("Sheet",V.Local.iCounter,1,7,V.local.sRow)
+	F.Intrinsic.String.Split(V.Local.sRow,"*!*",V.Local.sCol)
+
+	'GL_Account: V.Local.sCol(0)
+	'Vendor_To_Pay: V.Local.sCol(1)
+	'Merchant: V.Local.sCol(2)
+	'Transaction Amount: V.Local.sCol(3)
+	'Name: V.Local.sCol(4)
+	'WorkOrder: V.Local.sCol(5)
+	'Invoice Number: V.Local.sCol(6) <=> Concur ID
+
+	v.Local.bGoodData.Set(False)
+	v.Local.sGoodGL.Set("0")
+	v.Local.sGoodAmount.Set("0")
+	v.Local.sGoodWO.Set("0")	
+
+	'Check the GL_Account
+	F.Intrinsic.String.Concat("Select * From GL_MASTER where GL_ACCOUNT='",v.Local.sCol(0).Trim,"'",V.Local.sSQL)
+	F.ODBC.Connection!Conx.OpenRecordsetRO("rst",V.Local.sSQL)
+	F.Intrinsic.Control.If(V.ODBC.Conx!rst.EOF,=,True)
+		V.Local.sGoodGL.Set("0")
+	F.Intrinsic.Control.Else
+		V.local.sGoodGL.Set("1")
+	F.Intrinsic.Control.EndIf
+	F.ODBC.Conx!rst.Close
+
+	'Check the Amount
+	f.Intrinsic.Math.IsNumeric(V.Local.sCol(3).Trim,v.Local.bAmount)
+	f.Intrinsic.Control.if(v.Local.bAmount,=,False)
+		v.Local.sGoodAmount.Set("0")
+	f.Intrinsic.Control.Else
+		v.Local.sGoodAmount.Set("1")
+	f.Intrinsic.Control.EndIf
+
+
+
+
+	'Check the Work Order
+	v.Local.sWO.Set(v.Local.sCol(5).Trim)
+	f.Intrinsic.String.Mid(v.Local.sCol(5).Trim,7,3,v.Local.sSuffix)
+
+	f.Intrinsic.Control.If(v.Local.sWO,<>,"")
+'		F.Intrinsic.String.Build("Select * From Job_header where job='{0}' and suffix = '{1}'",v.Local.sWO.Left6,v.Local.sWO.Right3,v.Local.sSQL)
+		F.Intrinsic.String.Build("Select * From Job_header where job='{0}' and suffix = '{1}'",v.Local.sWO.Left6,v.Local.sSuffix,v.Local.sSQL)
+		F.ODBC.Connection!Conx.OpenRecordsetRO("rst",V.Local.sSQL)
+		F.Intrinsic.Control.If(V.ODBC.Conx!rst.EOF,=,True)
+			V.Local.sGoodWO.Set("0")
+		F.Intrinsic.Control.Else
+			V.local.sGoodWO.Set("1")
+		F.Intrinsic.Control.EndIf
+		F.ODBC.Conx!rst.Close
+	f.Intrinsic.Control.Else
+		v.Local.sGoodWO.Set("1")
+	f.Intrinsic.Control.EndIf
+
+	'Data condition: GL + Amount + WO
+	f.Intrinsic.String.Concat(v.Local.sGoodGL, v.Local.sGoodAmount,v.Local.sGoodWO, v.Local.sDataCondition)
+
+	F.Intrinsic.Control.SelectCase(v.Local.sDataCondition)
+		F.Intrinsic.Control.Case("111")
+			v.Local.bGoodData.Set(True)	
+		F.Intrinsic.Control.Case("110")
+			v.Local.sReason.set("WO")
+		F.Intrinsic.Control.Case("101")
+			v.Local.sReason.set("Amount")
+		F.Intrinsic.Control.Case("010")
+			v.Local.sReason.set("GL+WO")
+		F.Intrinsic.Control.Case("011")
+			v.Local.sReason.set("GL")
+		F.Intrinsic.Control.Case("001")
+			v.Local.sReason.set("GL+Amount")
+		F.Intrinsic.Control.CaseElse
+			v.Local.sReason.set("GL+Amount+WO")
+	F.Intrinsic.Control.EndSelect
+
+	v.Local.bGoodData.Set(True)
+	'If good data
+	f.Intrinsic.Control.If(v.Local.bGoodData,=,False)
+		'Write 'Error' to .xls file
+		Function.Automation.MSExcel.WriteCell("Sheet", v.Local.iCounter, 8,"Error")
+		Function.Automation.MSExcel.WriteCell("Sheet", v.Local.iCounter, 9,v.Local.sReason)	
+		f.Intrinsic.Math.Add(v.Local.iError,1,v.Local.iError)
+
+	f.Intrinsic.Control.else
+	'Data is good
+		v.Local.bWrite.Set(True)
+		'=====CallWrapperSync(50,"UPLAPOP/A")===============		
+
+		f.Intrinsic.Math.Add(v.Local.iLine,1,v.Local.iLine)
+		Function.Automation.MSExcel.WriteCell("Sheet", v.Local.iCounter, 10,v.Local.iLine)
+		Function.Automation.MSExcel.WriteCell("Sheet", v.Local.iCounter, 8,"Processed")	
+
+		'Vendor number - Hard code as user always pay to credit card company
+'		v.local.sOITLine.Set("002000")
+'RANJIT
+		F.Intrinsic.String.LPad(Variable.Passed.000002,"0",6,v.local.sOITLine)
+		'Reserved
+		F.Intrinsic.String.Concat(V.local.sOITLine," ",V.local.sOITLine)
+
+'		'Invoice 8-22 (15 characters) right after Vendor - 
+'		F.Intrinsic.String.RPad(v.Local.sCol(6).Trim," ",15,V.Local.sTemp)
+'		F.Intrinsic.String.Concat(V.local.sOITLine,V.Local.sTemp,V.local.sOITLine)
+
+		'RANJIT
+		F.Intrinsic.String.RPad(Variable.Passed.000018," ",15,V.Local.sTemp)
+		F.Intrinsic.String.Concat(V.local.sOITLine,V.Local.sTemp,V.local.sOITLine)
+
+		'Transaction Code- always 10 (for invoice type) (2 characters) right after Invoice
+		F.Intrinsic.String.Concat(V.local.sOITLine, "10",V.local.sOITLine)
+
+		'Batch # 25-29 (5 characters), right after Transaction Code
+		F.Intrinsic.String.Concat(V.local.sOITLine,v.Local.sBatchNum,V.local.sOITLine)
+
+		'Batch Line (3 characters) right after Batch #
+		v.Local.sTemp.Set(v.Local.iLine)
+		F.Intrinsic.String.LPad(v.Local.sTemp,"0",3,V.Local.sTemp)
+		F.Intrinsic.String.Concat(V.local.sOITLine,V.Local.sTemp,V.local.sOITLine)
+
+		'Batch Date 33-38  MMDDYY (6 characters) right after Batch Date
+		F.Intrinsic.String.Concat(V.local.sOITLine, v.Local.sBatchDate,V.local.sOITLine)
+
+		'Territory/Branch 39-40 (2 characters) 
+
+		 'Area 41-42 (2 characters)
+
+		'GL Acct 43-57 15		
+		f.Intrinsic.String.RPad(v.local.sOITLine," ",42,v.local.sOITLine)
+		F.Intrinsic.String.RPad(V.Local.sCol(0).Trim," ",15,V.Local.sTemp)
+		F.Intrinsic.String.Concat(V.local.sOITLine,V.Local.sTemp,V.local.sOITLine)
+
+		'Invoice Date 58-63 MMDDYY (6 characters) right after GL Acct
+		F.Intrinsic.String.Concat(V.local.sOITLine,V.Local.sBatchDate,V.local.sOITLine)
+
+		'Invoice Amt 69-84  (16 characters)
+		f.Intrinsic.String.RPad(v.local.sOITLine," ",68,v.local.sOITLine)
+		F.Intrinsic.String.Format(V.Local.sCol(3).Trim,"0.00",V.Local.sTemp)
+		F.Intrinsic.String.LPad(V.Local.sTemp," ",16,V.Local.sTemp)
+		F.Intrinsic.String.Concat(V.local.sOITLine,V.Local.sTemp,V.local.sOITLine)
+
+		'Invoice Due Date 85-90 MMDDYY (6 characters)right after Invoice Amount
+		F.Intrinsic.String.Concat(V.local.sOITLine,V.Local.sBatchDate,V.local.sOITLine)
+
+		'Filler, Inv Discount, PO #, Buyer, Check #, Check Date, Check Code, Receiver #
+
+		'Job/WO 141-146 (6 characters)
+		f.Intrinsic.String.RPad(v.local.sOITLine," ",140,v.local.sOITLine)
+		F.Intrinsic.String.Concat(V.local.sOITLine,V.Local.sWO.left6,V.local.sOITLine)
+
+		'Suffix 147-149 (3 characters)
+'		F.Intrinsic.String.Concat(V.local.sOITLine,v.Local.sWO.Right3,V.local.sOITLine)
+		F.Intrinsic.String.Concat(V.local.sOITLine,v.Local.sSuffix,V.local.sOITLine)
+
+		'Operation(sequence) 150-155 (6 characters)
+'		F.Intrinsic.String.Concat(V.local.sOITLine,"995000",V.local.sOITLine)
+		F.Intrinsic.String.Concat(V.local.sOITLine,v.Local.sWO.Right6,V.local.sOITLine)
+
+		'Record Amount 254-269 16
+		'This field is Required for the Aging Report and should match the invoice amount.
+		f.Intrinsic.String.RPad(v.local.sOITLine," ",253,v.local.sOITLine)
+		F.Intrinsic.String.Format(V.Local.sCol(3).Trim,"0.00",V.Local.sTemp)
+		F.Intrinsic.String.LPad(V.Local.sTemp," ",16,V.Local.sTemp)
+		F.Intrinsic.String.Concat(V.local.sOITLine,V.Local.sTemp,V.local.sOITLine)		
+
+		'Currency Code 271-273 (3 characters)
+		F.Intrinsic.String.Concat(V.local.sOITLine,"USD",V.local.sOITLine)
+
+		f.Intrinsic.String.RPad(v.local.sOITLine," ",330,v.local.sOITLine)
+
+		f.Intrinsic.String.Concat(v.Local.sOpenItemText,v.local.sOITLine,v.Ambient.NewLine,v.Local.sOpenItemText)		
+		'===End CallWrapperSync(50,"UPLAPOP/A")========	
+
+				'break
+
+		'===CallWrapperSync(50,"UPLGDETL")==============
+
+		'=====Line 1====================
+
+		'GL Account
+		F.Intrinsic.String.RPad(v.Local.sCol(0).Trim," ",15,V.Local.sGLDTLine)
+
+		'Post Date
+		F.Intrinsic.String.Format(v.Local.dPostDate,"YYYYMMDD",V.Local.sRet)
+		F.Intrinsic.String.Build("{0}{1}",V.Local.sGLDTLine,V.Local.sRet,V.Local.sGLDTLine)
+
+		'Batch Number 
+		F.Intrinsic.String.Build("{0}{1}",V.Local.sGLDTLine,v.Local.sBatchNum,V.Local.sGLDTLine)
+
+		'Batch line	
+		v.Local.sTemp.Set(v.Local.iLine)	
+		f.Intrinsic.String.LPad(v.Local.sTemp,"0",5,v.Local.sTemp)
+		F.Intrinsic.String.Build("{0}{1}",V.Local.sGLDTLine,v.Local.sTemp,V.Local.sGLDTLine)
+
+		f.Intrinsic.Math.Add(v.Local.lVNO,1,v.Local.lVNO)
+		'Voucher 34-40  store id to link AP-GL
+		F.Intrinsic.String.RPad(V.Local.sGLDTLine," ",33,V.Local.sGLDTLine)
+		f.Intrinsic.String.LPad(v.Local.lVNO,"0",4,v.Local.sTemp)
+		F.Intrinsic.String.RPad(v.Local.sTemp," ",7,V.Local.sTemp)
+		F.Intrinsic.String.Build("{0}{1}",V.Local.sGLDTLine,V.Local.sTemp,V.Local.sGLDTLine)	
+
+		'Reference 41-55
+		F.Intrinsic.String.RPad(V.Local.sGLDTLine," ",40,V.Local.sGLDTLine)
+		F.Intrinsic.String.RPad(v.Local.sCol(4).Trim," ",15,V.Local.sTemp)
+		F.Intrinsic.String.Build("{0}{1}",V.Local.sGLDTLine,V.Local.sTemp,V.Local.sGLDTLine)	
+
+		'Amount
+		F.Intrinsic.String.RPad(V.Local.sGLDTLine," ",55,V.Local.sGLDTLine)
+		F.Intrinsic.String.Format(V.Local.sCol(3).Trim,"0.00",V.Local.sTemp)
+		f.Intrinsic.String.LPad(v.Local.sTemp," ",16,v.Local.sTemp)
+		F.Intrinsic.String.Build("{0}{1}",V.Local.sGLDTLine,v.Local.sTemp,V.Local.sGLDTLine)
+
+		'Description 72-101
+		F.Intrinsic.String.RPad(V.Local.sGLDTLine," ",71,V.Local.sGLDTLine)
+		F.Intrinsic.String.RPad(v.Local.sCol(2).Trim," ",30,V.Local.sTemp)
+		F.Intrinsic.String.Build("{0}{1}",V.Local.sGLDTLine,v.Local.sTemp,V.Local.sGLDTLine)	
+
+'		F.Intrinsic.String.RPad(V.Local.sGLDTLine," ",101,V.Local.sGLDTLine)
+
+		'Appliation Type
+		F.Intrinsic.String.Build("{0}AP",V.Local.sGLDTLine,V.Local.sGLDTLine)
+		'Transaction Type
+		F.Intrinsic.String.Build("{0}10",V.Local.sGLDTLine,V.Local.sGLDTLine)
+
+'		'Vendor ID 113-119 7
+'		f.Intrinsic.String.RPad(v.Local.sGLDTLine," ",112,v.Local.sGLDTLine)
+'		F.Intrinsic.String.Build("{0}{1}",V.Local.sGLDTLine,"002000",V.Local.sGLDTLine)
+
+		'RANJIT-----------------------------------
+		F.Intrinsic.String.LPad(Variable.Passed.000002,"0",6,v.local.sTemp)
+
+		'Vendor ID 113-119 7
+		f.Intrinsic.String.RPad(v.Local.sGLDTLine," ",112,v.Local.sGLDTLine)
+		F.Intrinsic.String.Build("{0}{1}",V.Local.sGLDTLine,v.local.sTemp,V.Local.sGLDTLine)
+
+		'------------------------------------------
+
+
+		'Invoice Number 127-141 15
+		f.Intrinsic.String.RPad(v.Local.sGLDTLine," ",126,v.Local.sGLDTLine)
+		F.Intrinsic.String.RPad(V.Local.sCol(6).Trim," ",15,V.Local.sTemp)
+		F.Intrinsic.String.Build("{0}{1}",V.Local.sGLDTLine,V.Local.sTemp,V.Local.sGLDTLine)
+
+
+		f.Intrinsic.String.RPad(v.Local.sGLDTLine," ",217,V.Local.sGLDTLine)
+
+		F.Intrinsic.String.Build("{0}{1}{2}",V.Local.sGLDetailText,V.Local.sGLDTLine,V.Ambient.NewLine,V.Local.sGLDetailText)		
+
+			'=================Line 2=====================================================================	
+
+
+		'GL
+		F.Intrinsic.String.Concat("2000           ", V.Local.sGLDTLine.Right202,V.Local.sGLDTLine)
+
+'		'Voucher 34-40  store id to link AP-GL
+'		f.Intrinsic.String.Mid(V.Local.sGLDTLine,34,7,v.Local.sTemp)
+'		f.Intrinsic.String.Mid(V.Local.sGLDTLine,16,18,v.Local.sTemp1)
+'		F.Intrinsic.String.Concat("2000           ",v.Local.sTemp1,v.Local.sTemp ,V.Local.sGLDTLine.Right183,V.Local.sGLDTLine)
+
+		'Amount
+		f.Intrinsic.Math.Sub(0,v.Local.sCol(3).Trim,v.Local.fHold)
+		F.Intrinsic.String.Format(v.Local.fHold,"0.00",V.Local.sTemp)
+		f.Intrinsic.String.LPad(v.Local.sTemp," ",16,v.Local.sTemp)		
+		f.Intrinsic.String.Concat(v.Local.sGLDTLine.left55,v.Local.sTemp,v.Local.sGLDTLine.right146,v.Local.sGLDTLine)
+
+		F.Intrinsic.String.Build("{0}{1}{2}",V.Local.sGLDetailText,V.Local.sGLDTLine,V.Ambient.NewLine,V.Local.sGLDetailText)		
+
+	f.Intrinsic.Control.EndIf
+F.Intrinsic.Control.Next(V.Local.iCounter)
+
+
+'If at least 1 record is processed
+f.Intrinsic.Control.If(v.Local.bWrite,=,True)
+	'we can use the batch number once as it is posted, so lock button Save and Invoice Lines to prevent them from being used
+	F.Intrinsic.UI.ChangeCallerProperty(V.Passed.000048,"LOCK",1)
+	F.Intrinsic.UI.ChangeCallerProperty(V.Passed.000051,"LOCK",1)
+
+
+
+	F.Intrinsic.String.Concat(V.caller.FilesDir,"\APOPNITM.TXT",V.Local.sFile)
+	F.Intrinsic.File.String2File(V.Local.sFile,V.Local.sOpenItemText)	
+	F.Global.General.CallWrapperSync(50,"UPLAPOP/A")
+
+	F.Intrinsic.String.Build("{0}\GLDETAIL.txt",V.Caller.FilesDir,V.Local.sFile)
+	F.Intrinsic.File.String2File(V.Local.sFile,V.Local.sGLDetailText)			
+	F.Global.General.CallWrapperSync(50,"UPLGDETL/A")
+
+
+	f.Intrinsic.String.Build("update gl_detail set wo=job,wo_suffix=Suffix,wo_seq=seq from  v_ap_open_items   where  v_ap_open_items.batch_line=gl_detail.voucher and v_ap_open_items.batch_num = '{0}'",v.Local.sBatchNum,v.Local.sSQL)
+	F.ODBC.Connection!Conx.Execute(V.Local.sSQL)
+
+f.Intrinsic.Control.EndIf
+
+Function.Automation.MSExcel.SaveWorkBook("Excel_Sheets")
+F.Automation.MSExcel.DestroyAllObjects("MSExcel","Excel_Sheets","Sheet")
+
+f.Intrinsic.UI.CloseWaitDialog
+
+f.Intrinsic.String.Concat("Uploaded with ",v.Local.iError," errors. Please see result in the same folder.",v.Local.sHold)
+f.Intrinsic.UI.Msgbox(v.Local.sHold,"End")
+
+f.Intrinsic.Control.CallSub(form_unload)
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("Process_File_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4441_Upload_AP_Invoice.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+Function.Intrinsic.Control.EndIf
+
+
+Program.Sub.Process_File.End
+
+Program.Sub.NewUpload.Start
+F.Intrinsic.Control.SetErrorHandler("NewUpload_Err")
+F.Intrinsic.Control.ClearErrors
+
+
+
+v.Local..BulkDeclareString(sError, sSQL, sRow, sCol, sFile, sBatchNum, sBatchDate, sGoodGL, sGoodAmount, sGoodWO, sDataCondition, sReason, sHold, sTemp, sOITLine, sOpenItemText, sGLDTLine, sGLDetailText)
+v.Local..BulkDeclareLong(iExcel, iRowNum, iCounter, iLine, iError)
+V.Local..BulkDeclareString(sDate, sRet, sTempFull)
+v.Local..BulkDeclareBoolean(bAmount, bGoodData, bWrite)
+V.Local.fHold.Declare(float)
+v.Local.dPostDate.Declare(date)
+v.Local.lVNO.Declare
+v.Local.sTemp1.Declare
+v.Local.sText.Declare
+
+
+
+
+
+
+'Batch Date: v.passed.000009 MMDDYY
+'v.Local.sBatchDate.Set(v.Screen.frmUpload!dtPost.Value)
+'Function.Intrinsic.Date.ConvertDString(v.Screen.frmUpload!dtPost.Value,"MMDDYY", v.Local.dPostDate)
+
+'F.Intrinsic.String.Format(v.Screen.frmUpload!dtPost.Value,"MMDDYY", v.Local.dPostDate)
+
+f.Intrinsic.UI.InvokeWaitDialog("Processing")
+
+'F.Intrinsic.Debug.InvokeDebugger
+
+'We copy this file, then get data and write result to the new file
+f.Intrinsic.String.Split(v.Global.sFileExcel,".",v.Local.sHold)
+f.Intrinsic.String.Concat(v.Local.sHold(0),"_",v.Caller.Terminal,"_Result.xls",v.Global.sFileExcel_Result)
+F.Intrinsic.File.CopyFile(V.Global.sFileExcel,V.Global.sFileExcel_Result)
+
+v.Local.iExcel.Set(1)
+F.Automation.MSExcel.CreateAppObject("MSExcel")
+F.Automation.MSExcel.OpenWorkbook("MSEXcel","Excel_Sheets",V.Global.sFileExcel_Result)
+F.Automation.MSExcel.OpenWorksheet("Excel_Sheets","Sheet",V.Local.iExcel)
+Function.Automation.MSExcel.WriteCell("Sheet", 1, 8,"Result")
+Function.Automation.MSExcel.WriteCell("Sheet", 1, 9,"Reason")
+Function.Automation.MSExcel.WriteCell("Sheet", 1, 10,"BatchLine")
+
+F.Automation.MSExcel.RowCount("Sheet",V.Local.iRowNum)
+
+F.ODBC.Connection!conx.OpenConnection(V.Ambient.PDSN, V.Ambient.PUser, V.Ambient.PPass)
+
+F.Intrinsic.Control.For(V.Local.iCounter,2,v.Local.iRowNum,1)
+	Function.Intrinsic.UI.ChangeWaitStatus("Building AP Data", V.Local.iCounter, 1, V.Local.iRowNum)	
+	
+	F.Automation.MSExcel.ReadRow("Sheet",V.Local.iCounter,1,7,V.local.sRow)
+	
+	F.Intrinsic.String.Split(V.Local.sRow,"*!*",V.Local.sCol)
+
+	'GL_Account: V.Local.sCol(0)
+	'Vendor_To_Pay: V.Local.sCol(1)
+	'Merchant: V.Local.sCol(2)
+	'Transaction Amount: V.Local.sCol(3)
+	'Name: V.Local.sCol(4)
+	'WorkOrder: V.Local.sCol(5)
+	'Invoice Number: V.Local.sCol(6) <=> Concur ID
+
+	v.Local.bGoodData.Set(False)
+	v.Local.sGoodGL.Set("0")
+	v.Local.sGoodAmount.Set("0")
+	v.Local.sGoodWO.Set("0")	
+
+	'Check the GL_Account
+	F.Intrinsic.String.Concat("Select * From GL_MASTER where GL_ACCOUNT='",v.Local.sCol(0).Trim,"'",V.Local.sSQL)
+	F.ODBC.Connection!Conx.OpenRecordsetRO("rst",V.Local.sSQL)
+	F.Intrinsic.Control.If(V.ODBC.Conx!rst.EOF,=,True)
+		V.Local.sGoodGL.Set("0")
+	F.Intrinsic.Control.Else
+		V.local.sGoodGL.Set("1")
+	F.Intrinsic.Control.EndIf
+	F.ODBC.Conx!rst.Close
+
+	'Check the Amount
+	f.Intrinsic.Math.IsNumeric(V.Local.sCol(3).Trim,v.Local.bAmount)
+	f.Intrinsic.Control.if(v.Local.bAmount,=,False)
+		v.Local.sGoodAmount.Set("0")
+	f.Intrinsic.Control.Else
+		v.Local.sGoodAmount.Set("1")
+	f.Intrinsic.Control.EndIf
+
+
+
+
+	'Check the Work Order
+	v.Local.sWO.Set(v.Local.sCol(5).Trim)
+	f.Intrinsic.String.Mid(v.Local.sCol(5).Trim,7,3,v.Local.sSuffix)
+	v.Local.sSeq.Set(V.Local.sWO.Right6)
+
+	f.Intrinsic.Control.If(v.Local.sWO,<>,"")
+'		F.Intrinsic.String.Build("Select * From Job_header where job='{0}' and suffix = '{1}'",v.Local.sWO.Left6,v.Local.sWO.Right3,v.Local.sSQL)
+		F.Intrinsic.String.Build("Select * From Job_header where job='{0}' and suffix = '{1}'",v.Local.sWO.Left6,v.Local.sSuffix,v.Local.sSQL)
+		F.ODBC.Connection!Conx.OpenRecordsetRO("rst",V.Local.sSQL)
+		F.Intrinsic.Control.If(V.ODBC.Conx!rst.EOF,=,True)
+			V.Local.sGoodWO.Set("0")
+		F.Intrinsic.Control.Else
+			V.local.sGoodWO.Set("1")
+		F.Intrinsic.Control.EndIf
+		F.ODBC.Conx!rst.Close
+	f.Intrinsic.Control.Else
+		v.Local.sGoodWO.Set("1")
+	f.Intrinsic.Control.EndIf
+
+	'Data condition: GL + Amount + WO
+	f.Intrinsic.String.Concat(v.Local.sGoodGL, v.Local.sGoodAmount,v.Local.sGoodWO, v.Local.sDataCondition)
+
+	F.Intrinsic.Control.SelectCase(v.Local.sDataCondition)
+		F.Intrinsic.Control.Case("111")
+			v.Local.bGoodData.Set(True)	
+		F.Intrinsic.Control.Case("110")
+			v.Local.sReason.set("WO")
+		F.Intrinsic.Control.Case("101")
+			v.Local.sReason.set("Amount")
+		F.Intrinsic.Control.Case("010")
+			v.Local.sReason.set("GL+WO")
+		F.Intrinsic.Control.Case("011")
+			v.Local.sReason.set("GL")
+		F.Intrinsic.Control.Case("001")
+			v.Local.sReason.set("GL+Amount")
+		F.Intrinsic.Control.CaseElse
+			v.Local.sReason.set("GL+Amount+WO")
+	F.Intrinsic.Control.EndSelect
+
+	v.Local.bGoodData.Set(True)
+	'If good data
+	f.Intrinsic.Control.If(v.Local.bGoodData,=,False)
+		'Write 'Error' to .xls file
+		Function.Automation.MSExcel.WriteCell("Sheet", v.Local.iCounter, 8,"Error")
+		Function.Automation.MSExcel.WriteCell("Sheet", v.Local.iCounter, 9,v.Local.sReason)	
+		f.Intrinsic.Math.Add(v.Local.iError,1,v.Local.iError)
+
+	f.Intrinsic.Control.else
+	'Data is good
+		v.Local.bWrite.Set(True)
+		'=====CallWrapperSync(50,"UPLAPOP/A")===============		
+
+		f.Intrinsic.Math.Add(v.Local.iLine,1,v.Local.iLine)
+		Function.Automation.MSExcel.WriteCell("Sheet", v.Local.iCounter, 10,v.Local.iLine)
+		Function.Automation.MSExcel.WriteCell("Sheet", v.Local.iCounter, 8,"Processed")	
+
+		v.local.sVendor.Declare 
+		v.local.sInvoice.Declare 
+		v.local.sInvoiceDt.Declare 
+		v.local.sInvoiceAmt.Declare
+		v.local.sWO.Declare 
+		v.local.sSuffix.Declare 
+		v.local.sSeq.Declare 
+		v.local.sGL.Declare 
+
+		F.Intrinsic.String.LPad(v.Screen.frmUpload!txtVendor.text,"0",6,v.local.sVendor)
+		F.Intrinsic.String.RPad(v.Screen.frmUpload!txtInvoice.text," ",15,v.local.sInvoice)
+
+
+		F.Intrinsic.String.Format(v.Screen.frmUpload!dtPost.Value,"MMDDYY",v.local.sInvoiceDt)
+'		F.Intrinsic.String.Format(v.Local.dPostDate,"MMDDYY",v.local.sInvoiceDt)
+
+		F.Intrinsic.String.Replace(V.Local.sCol(3).Trim,"$","",V.Local.sTemp)
+		F.Intrinsic.String.Format(V.Local.sTemp,"##############.00",V.Local.sInvoiceAmt)
+
+
+
+
+		'GL Account
+		F.Intrinsic.String.RPad(V.Local.sCol(0).Trim," ",15,V.Local.sGL)
+
+'		v.Local.sWO.Set("")
+
+f.Intrinsic.Control.If(V.Local.sSuffix.trim,<>,"")
+	f.Intrinsic.String.Build("{0}-{1}",v.Local.sWO.Left6,V.Local.sSuffix,V.Local.sWO)
+f.Intrinsic.Control.Else
+	v.Local.sWO.Set(v.Local.sWO.Left6)
+f.Intrinsic.Control.EndIf 
+
+'F.Intrinsic.Debug.InvokeDebugger
+
+'F.Intrinsic.Debug.Stop
+		
+		f.Intrinsic.String.Build("{0}/{1}",V.Local.sCol(2),V.Local.sCol(4),v.Local.sText)
+
+		F.Intrinsic.Control.If(V.Local.iCounter,<>,2)
+			F.Intrinsic.String.Concat(V.local.sOITLine,V.Ambient.NewLine,V.local.sOITLine)
+		F.Intrinsic.Control.EndIf
+		' Added for HVS to pull batch date from date picker
+		F.Intrinsic.String.Concat(V.local.sOITLine,v.Local.sInvoiceDt,"*!*",v.local.sVendor,"*!*",v.local.sInvoice,"*!*",v.local.sInvoiceDt,V.local.sOITLine)
+'		F.Intrinsic.String.Concat(V.local.sOITLine,"*!*",v.local.sInvoiceAmt,"*!*",v.local.sGL,"*!*",v.Local.sWO,"*!*","","*!*","*!*",V.local.sOITLine)
+'		F.Intrinsic.String.Concat(V.local.sOITLine,"*!*",v.local.sInvoiceAmt,"*!*",v.local.sGL,"*!*",v.Local.sWO,"*!*","","*!*",v.Local.sSeq,"*!*",V.local.sOITLine)
+		F.Intrinsic.String.Concat(V.local.sOITLine,"*!*",v.local.sInvoiceAmt,"*!*",v.local.sGL,"*!*",v.Local.sWO,"*!*","","*!*",v.Local.sSeq,"*!*",v.Local.sText,"*!*",V.local.sOITLine)
+	f.Intrinsic.Control.EndIf
+F.Intrinsic.Control.Next(V.Local.iCounter)
+
+'
+'F.Intrinsic.Debug.InvokeDebugger
+'
+'F.Intrinsic.Debug.Stop
+
+
+F.Intrinsic.String.Concat(V.caller.FilesDir,"\APBatch_Upload.TXT",V.Local.sFile)
+F.Intrinsic.File.String2File(V.Local.sFile,V.Local.sOITLine)
+F.Intrinsic.Task.LaunchGSSSync("AP043UP1","-c","")
+
+F.Intrinsic.UI.Msgbox("AP batches created")
+
+'If at least 1 record is processed
+f.Intrinsic.Control.If(v.Local.bWrite,=,True)
+	'we can use the batch number once as it is posted, so lock button Save and Invoice Lines to prevent them from being used
+'	F.Intrinsic.UI.ChangeCallerProperty(V.Passed.000048,"LOCK",1)
+'	F.Intrinsic.UI.ChangeCallerProperty(V.Passed.000051,"LOCK",1)
+
+
+
+f.Intrinsic.Control.EndIf
+
+Function.Automation.MSExcel.SaveWorkBook("Excel_Sheets")
+F.Automation.MSExcel.DestroyAllObjects("MSExcel","Excel_Sheets","Sheet")
+
+f.Intrinsic.UI.CloseWaitDialog
+
+f.Intrinsic.String.Concat("Uploaded with ",v.Local.iError," errors. Please see result in the same folder.",v.Local.sHold)
+f.Intrinsic.UI.Msgbox(v.Local.sHold,"End")
+f.ODBC.Connection!conx.Close
+f.Intrinsic.Control.CallSub(form_unload)
+
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("NewUpload_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	f.Intrinsic.UI.CloseWaitDialog
+	Function.Intrinsic.String.Concat("Project: GCG_4441_Upload_AP_Invoice.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+Function.Intrinsic.Control.EndIf
+
+
+Program.Sub.NewUpload.End
+
+Program.Sub.cmdBrowse_Click.Start
+F.Intrinsic.Control.SetErrorHandler("Process_File_Err")
+F.Intrinsic.Control.ClearErrors
+
+V.Local.sError.Declare(String)
+
+V.Local.sRet.Declare(String)
+
+Function.Intrinsic.UI.Browser(300,"",Variable.Local.sRet)
+
+F.Intrinsic.Control.If(V.Local.sRet,"=","***CANCEL***")
+	F.Intrinsic.UI.Msgbox("No Record was selected")
+F.Intrinsic.Control.Else
+	F.Intrinsic.String.Split(V.Local.sRet,"*!*",V.Local.sRet)
+	gui.frmUpload.txtVendor.text(V.Local.sRet(0))
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("Process_File_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4441_Upload_AP_Invoice.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+Function.Intrinsic.Control.EndIf
+
+
+Program.Sub.cmdBrowse_Click.End
+
+Program.Sub.cmdUpload_Click.Start
+F.Intrinsic.Control.SetErrorHandler("cmdBrowse_Click_Err")
+F.Intrinsic.Control.ClearErrors
+
+V.Local.sError.Declare(String)
+
+f.Intrinsic.Control.If(v.Screen.frmUpload!txtVendor.Text,=,"")
+	f.Intrinsic.UI.Msgbox("Vendor not valid")
+	gui.frmUpload.txtVendor.SetFocus 
+	F.Intrinsic.Control.ExitSub
+f.Intrinsic.Control.ElseIf(v.Screen.frmUpload!txtInvoice.Text,=,"")
+	f.Intrinsic.UI.Msgbox("Invoice not valid")
+	gui.frmUpload.txtInvoice.SetFocus 
+	F.Intrinsic.Control.ExitSub
+Function.Intrinsic.Control.EndIf
+
+f.Intrinsic.Control.BlockEvents 
+
+F.Intrinsic.Control.CallSub(select_upload_file)	
+
+f.Intrinsic.Control.UnBlockEvents 
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("cmdBrowse_Click_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4441_Upload_AP_Invoice.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+Function.Intrinsic.Control.EndIf
+
+
+Program.Sub.cmdUpload_Click.End
+
+Program.Sub.Comments.Start
+${$0$}$$}$$}$4/10/2017 12:29:48 PM$}$False
+${$3$}$0$}$$}$-1$}$-1$}$$}$1/1/1900$}$This project was created for Kosmo Machine, Inc. on June of 2016.
+
+
+This is a custom GAB script that will display custom work order detail information. The information will be identical to the data from the work order detail grid in the standard GSS system however the user will not have the ability to browse via the ?Amount? column.
+The purpose of this is the customer has quoters/planners that would like to see this specific information and cannot do so with the Work Order (No Dollars) or WO Detail standard report.
+This GAB script is to run from the Work Order header screen. The script will check to see if the user is a part of the WODET security group. If they are not the ?Details? button will be disabled and the ?Script 1? button will be activated with the custom GAB script.
+Customer will need to set up the WODET security group prior to installation. Customer is responsible for setting up security for the standard work order screens if certain users are not to access it.
+
+**Note: Given the information on the custom grid, just as with the standard WO detail screen, given certain parameters pay for Labor may be calculated by users.
+Program.Sub.Comments.End
